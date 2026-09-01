@@ -1,0 +1,27 @@
+[project]
+name = "web_hooks"
+version = "0.1.0"
+description = "web_hooks"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "aiohttp>=3.12.13",
+    "asyncpg>=0.30.0",
+    "dependency-injector>=4.48.1",
+    "dynaconf>=3.2.11",
+    "fastapi>=0.116.0",
+    "psycopg2-binary>=2.9.10",
+    "pydantic>=2.11.7",
+    "uvicorn>=0.35.0",
+    "yoyo-migrations>=9.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
