@@ -1,5 +1,5 @@
 """Общие фикстуры. Тесты идут по живому стеку (docker compose up); если он
-недоступен — весь набор пропускается."""
+недоступен - весь набор пропускается."""
 
 import os
 import uuid
@@ -35,15 +35,18 @@ async def _require_stack(http):
         async with http.get(f"{STORE}/catalog?size=1", timeout=aiohttp.ClientTimeout(total=3)) as r:
             r.raise_for_status()
     except Exception:
-        pytest.skip("stack not reachable — run `docker compose up -d` first")
+        pytest.skip("stack not reachable - run `docker compose up -d` first")
 
 
 @pytest_asyncio.fixture(autouse=True)
 async def reset_suppliers(http, _require_stack):
-    """Возвращает обоих поставщиков в чистое состояние 'normal' перед каждым тестом."""
+    """Чистое состояние поставщиков перед каждым тестом: mode=normal, восстановленный
+    сток и очищенный журнал выдач (важно для византийских сценариев), плюс щедрый
+    rate-limit (обычные тесты не троттлятся)."""
     for s in ("A", "B"):
-        await http.post(f"{SUPPLIERS}/{s}/config",
-                        json={"mode": "normal", "error_rate": 0, "timeout_rate": 0})
+        await http.post(f"{SUPPLIERS}/{s}/reset?restock=true")
+        await http.post(f"{STORE}/admin/rate-limit/{s}",
+                        json={"limit_per_window": 1000, "window_seconds": 60})
     yield
 
 
@@ -51,6 +54,13 @@ async def reset_suppliers(http, _require_stack):
 
 async def create_order(http, sku="STEAM-TOPUP-500"):
     async with http.post(f"{STORE}/orders", json={"sku": sku}) as r:
+        r.raise_for_status()
+        return await r.json()
+
+
+async def create_multi_order(http, skus):
+    """Мультитоварный заказ: список SKU (по одной штуке на позицию)."""
+    async with http.post(f"{STORE}/orders", json={"items": skus}) as r:
         r.raise_for_status()
         return await r.json()
 
@@ -99,3 +109,40 @@ async def wait_for(http, order_id, statuses, timeout=20.0):
 
 async def deliveries_count(db, order_id):
     return await db.fetchval("SELECT count(*) FROM deliveries WHERE order_id=$1", order_id)
+
+
+async def set_rate_limit(http, supplier, limit_per_window, window_seconds=60):
+    async with http.post(f"{STORE}/admin/rate-limit/{supplier}",
+                         json={"limit_per_window": limit_per_window,
+                               "window_seconds": window_seconds}) as r:
+        r.raise_for_status()
+
+
+async def queue_progress(http):
+    async with http.get(f"{STORE}/admin/queue") as r:
+        r.raise_for_status()
+        return await r.json()
+
+
+async def item_status_counts(db, order_id):
+    """{'delivered': n, 'refunded': m, ...} по строкам заказа."""
+    rows = await db.fetch(
+        "SELECT status, count(*) AS c FROM order_items WHERE order_id=$1 GROUP BY status",
+        order_id,
+    )
+    return {r["status"]: r["c"] for r in rows}
+
+
+async def order_money(db, order_id):
+    """(paid, delivered, refunded) в деньгах по журналу проводок заказа."""
+    row = await db.fetchrow(
+        """
+        SELECT
+          COALESCE(SUM(amount) FILTER (WHERE account='customer_funds' AND direction='credit'),0) AS paid,
+          COALESCE(SUM(amount) FILTER (WHERE account='revenue' AND direction='credit'),0)        AS delivered,
+          COALESCE(SUM(amount) FILTER (WHERE account='refunds' AND direction='credit'),0)        AS refunded
+        FROM ledger_entries WHERE order_id=$1
+        """,
+        order_id,
+    )
+    return row["paid"], row["delivered"], row["refunded"]

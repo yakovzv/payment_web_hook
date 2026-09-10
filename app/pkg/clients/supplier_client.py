@@ -1,5 +1,5 @@
 """HTTP-клиент к заглушкам-поставщикам: делает /issue и классифицирует ответ
-(ok / нет в наличии / ошибка / таймаут). Таймаут ≠ отказ."""
+(ok / нет в наличии / ошибка / таймаут). Таймаут не равен отказу."""
 
 import asyncio
 
@@ -45,3 +45,30 @@ class SupplierClient:
             # Отказ соединения / DNS / reset: поставщик недоступен == ошибка.
             self._logger.warning("Поставщик %s недоступен: %s", supplier, exc)
             return "error", None
+
+    async def get_issue(self, supplier: str, request_id: str):
+        """Что поставщик реально выдал по request_id (аудит). Код или None."""
+        url = f"{self._urls[supplier]}/issue/{request_id}"
+        timeout = aiohttp.ClientTimeout(total=config.SUPPLIER_TIMEOUT_SEC)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return data.get("code")
+                    return None
+        except (asyncio.TimeoutError, aiohttp.ClientError):
+            return None
+
+    async def list_issues(self, supplier: str):
+        """Полная аудит-выгрузка выданных кодов поставщика (list[dict])."""
+        url = f"{self._urls[supplier]}/issues"
+        timeout = aiohttp.ClientTimeout(total=config.SUPPLIER_TIMEOUT_SEC)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        return await resp.json()
+                    return []
+        except (asyncio.TimeoutError, aiohttp.ClientError):
+            return []

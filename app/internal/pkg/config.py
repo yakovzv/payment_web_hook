@@ -1,4 +1,4 @@
-"""Настройки выдачи и интеграций — читаются из переменных окружения."""
+"""Настройки выдачи и интеграций - читаются из переменных окружения."""
 
 import os
 
@@ -33,12 +33,12 @@ class _Config:
     SUPPLIER_TIMEOUT_SEC: float = _f("SUPPLIER_TIMEOUT_SEC", 2.0)
 
     # Повторы в рамках вызова при неоднозначном таймауте, прежде чем отложить в
-    # фоновую очередь. Повторы переиспользуют ТОТ ЖЕ request_id, поэтому они могут
+    # фоновую очередь. Повторы переиспользуют тот же request_id, поэтому они могут
     # лишь забрать уже выданный код, но никогда не создадут второй.
     SUPPLIER_MAX_RETRIES: int = _i("SUPPLIER_MAX_RETRIES", 2)
     SUPPLIER_BACKOFF_BASE_SEC: float = _f("SUPPLIER_BACKOFF_BASE_SEC", 0.2)
 
-    # Воркеры выдачи. Их может быть несколько — claim идёт через
+    # Воркеры выдачи. Их может быть несколько - claim идёт через
     # FOR UPDATE SKIP LOCKED, поэтому два воркера никогда не берут один заказ.
     DELIVERY_WORKER_ENABLED: bool = _s("DELIVERY_WORKER_ENABLED", "1") == "1"
     DELIVERY_WORKER_COUNT: int = _i("DELIVERY_WORKER_COUNT", 2)
@@ -54,6 +54,16 @@ class _Config:
     # Строка delivery_outbox в статусе 'processing' дольше этого времени считается
     # зависшей (воркер упал на полпути) и возвращается в обработку.
     STUCK_PROCESSING_SEC: float = _f("STUCK_PROCESSING_SEC", 60.0)
+
+    # Воркер автосверки с недоверенным поставщиком (привязка утёкших кодов +
+    # фиксация расхождений). Идемпотентен; обычно достаточно одного.
+    INTEGRITY_WORKER_ENABLED: bool = _s("INTEGRITY_WORKER_ENABLED", "1") == "1"
+    INTEGRITY_WORKER_COUNT: int = _i("INTEGRITY_WORKER_COUNT", 1)
+    INTEGRITY_INTERVAL_SEC: float = _f("INTEGRITY_INTERVAL_SEC", 5.0)
+
+    # Бэкпрешер по лимиту поставщика: на сколько отложить задачу, если в окне не
+    # осталось токенов (это ожидание ёмкости, не сбой - без роста экспоненты).
+    RATE_LIMIT_DEFER_SEC: float = _f("RATE_LIMIT_DEFER_SEC", 1.0)
 
 
 config = _Config()

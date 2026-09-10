@@ -19,16 +19,18 @@ class IssueResponse(BaseModel):
 
 
 # Классификация результата одного вызова поставщика, используется для решения о fallback.
-#   ok          -> получен код (привязываем его)
-#   out_of_stock-> однозначный отказ -> пробуем следующего поставщика
-#   error       -> однозначная ошибка поставщика (5xx после повторов) -> пробуем следующего
-#   timeout     -> НЕОДНОЗНАЧНО (код мог быть выдан) -> НЕ делаем fallback, повторяем с тем же rid
+#   ok           - получен код (привязываем его)
+#   out_of_stock - однозначный отказ, пробуем следующего поставщика
+#   error        - однозначная ошибка поставщика (5xx после повторов), пробуем следующего
+#   timeout      - неоднозначно (код мог быть выдан): не делаем fallback, повторяем с тем же rid
 SupplierOutcome = Literal["ok", "out_of_stock", "error", "timeout"]
 
 
 class DeliveryResult(BaseModel):
     order_id: str
+    item_id: Optional[str] = None
     delivered: bool
+    refunded: bool = False
     supplier: Optional[str] = None
     code: Optional[str] = None
     status: str

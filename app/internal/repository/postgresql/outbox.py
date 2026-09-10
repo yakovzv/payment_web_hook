@@ -16,47 +16,48 @@ async def _conn(conn):
 
 
 class OutboxRepo(Repository):
-    async def enqueue(self, conn, order_id: str):
-        """Поставить в очередь задачу на выдачу. Первичный ключ по order_id делает операцию идемпотентной."""
+    async def enqueue(self, conn, item_id: str, order_id: str):
+        """Поставить в очередь задачу на выдачу строки. PK item_id делает операцию
+        идемпотентной (повторная постановка - no-op)."""
         await conn.execute(
-            "INSERT INTO delivery_outbox (order_id) VALUES ($1) "
-            "ON CONFLICT (order_id) DO NOTHING",
-            order_id,
+            "INSERT INTO delivery_outbox (item_id, order_id) VALUES ($1, $2) "
+            "ON CONFLICT (item_id) DO NOTHING",
+            item_id, order_id,
         )
 
     async def claim_batch(self, limit: int) -> list[str]:
-        """Атомарно захватить готовые к обработке задачи (SKIP LOCKED) -> один воркер на заказ."""
+        """Атомарно захватить готовые задачи (SKIP LOCKED): один воркер на строку.
+        Возвращает список item_id."""
         async with db_instance.get_connect() as conn:
             async with conn.transaction():
                 rows = await conn.fetch(
                     """
-                    SELECT order_id FROM delivery_outbox
+                    SELECT item_id FROM delivery_outbox
                     WHERE status='pending' AND next_attempt_at <= now()
-                    ORDER BY next_attempt_at
+                    ORDER BY next_attempt_at, created_at
                     FOR UPDATE SKIP LOCKED
                     LIMIT $1
                     """,
                     limit,
                 )
-                ids = [r["order_id"] for r in rows]
+                ids = [r["item_id"] for r in rows]
                 if ids:
                     await conn.execute(
                         "UPDATE delivery_outbox SET status='processing', locked_at=now(), "
-                        "updated_at=now() WHERE order_id = ANY($1::text[])",
+                        "updated_at=now() WHERE item_id = ANY($1::text[])",
                         ids,
                     )
                 return ids
 
-    async def mark_done(self, order_id: str, conn=None):
+    async def mark_done(self, item_id: str, conn=None):
         async with _conn(conn) as c:
             await c.execute(
-                "UPDATE delivery_outbox SET status='done', updated_at=now() WHERE order_id=$1",
-                order_id,
+                "UPDATE delivery_outbox SET status='done', updated_at=now() WHERE item_id=$1",
+                item_id,
             )
 
-    async def reschedule(self, order_id: str, reason: str, base: float, max_backoff: float):
-        """Вернуть задачу в 'pending' с экспоненциальным бэкоффом от числа
-        попыток (считается прямо в SQL, без read-modify-write)."""
+    async def reschedule(self, item_id: str, reason: str, base: float, max_backoff: float):
+        """Вернуть задачу в 'pending' с экспоненциальным бэкоффом от числа попыток."""
         async with db_instance.get_connect() as conn:
             await conn.execute(
                 """
@@ -65,9 +66,25 @@ class OutboxRepo(Repository):
                     next_attempt_at = now()
                         + LEAST($3 * power(2, attempts), $4) * interval '1 second',
                     updated_at=now()
-                WHERE order_id=$1
+                WHERE item_id=$1
                 """,
-                order_id, reason, base, max_backoff,
+                item_id, reason, base, max_backoff,
+            )
+
+    async def defer(self, item_id: str, reason: str, seconds: float):
+        """Отложить задачу на короткий фиксированный интервал без инкремента attempts.
+        Для бэкпрешера по лимиту: это не сбой выдачи, а ожидание ёмкости, поэтому
+        экспонента не растёт, задача не теряется и вернётся, как освободится токен."""
+        async with db_instance.get_connect() as conn:
+            await conn.execute(
+                """
+                UPDATE delivery_outbox
+                SET status='pending', last_error=$2, locked_at=NULL,
+                    next_attempt_at = now() + $3 * interval '1 second',
+                    updated_at=now()
+                WHERE item_id=$1
+                """,
+                item_id, reason, seconds,
             )
 
     async def reclaim_stuck(self, stuck_sec: float) -> int:
