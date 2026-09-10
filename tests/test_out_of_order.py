@@ -1,4 +1,4 @@
-"""Этап 2: вебхук раньше заказа (критерий 3) — принят, отложен и применён,
+"""Этап 2: вебхук раньше заказа (критерий 3) - принят, отложен и применён,
 когда заказ появился."""
 
 import uuid
@@ -9,7 +9,7 @@ from conftest import STORE, deliveries_count, get_order, send_webhook, wait_for
 async def test_webhook_before_order(http, db):
     order_id = f"ord_ooo_{uuid.uuid4().hex[:12]}"
 
-    # 1) Вебхук приходит первым — заказа ещё нет.
+    # 1) Вебхук приходит первым - заказа ещё нет.
     status, ack = await send_webhook(http, order_id)
     assert status == 200
     assert ack["result"] == "pending"
@@ -18,11 +18,16 @@ async def test_webhook_before_order(http, db):
     code, _ = await get_order(http, order_id)
     assert code == 404
 
-    # 3) Заказ создаётся позже (эмуляция другого пути создания).
+    # 3) Заказ создаётся позже (эмуляция другого пути создания) - заголовок + строка.
     await db.execute(
         "INSERT INTO orders (id, sku, amount, currency, status) "
         "VALUES ($1, 'STEAM-TOPUP-500', 500, 'RUB', 'created')",
         order_id,
+    )
+    await db.execute(
+        "INSERT INTO order_items (id, order_id, sku, amount, currency, status) "
+        "VALUES ($1, $2, 'STEAM-TOPUP-500', 500, 'RUB', 'created')",
+        f"itm_ooo_{order_id[-8:]}", order_id,
     )
 
     # 4) Восстановление применяет отложенное событие и запускает выдачу.

@@ -1,27 +1,38 @@
-"""Этап 4: пустой остаток восстановим (критерий 6) — заказ висит в восстановимом
-статусе, после пополнения доводится до выдачи."""
+"""Этап 6: если товар не может выдать ни один поставщик - заказ честно
+доводится до терминала возвратом (деньги назад), без падения и без зависания.
+По деньгам сходится (оплачено == возвращено), повтор восстановления идемпотентен.
 
-from conftest import (create_order, deliveries_count, send_webhook,
-                      set_supplier, wait_for, STORE)
+(Заменяет прежний сценарий «out_of_stock -> восстановимо»: на этом этапе
+невыдаваемая позиция трактуется как невозможность выдать и честно возвращается.)"""
+
+from conftest import (STORE, create_order, deliveries_count, order_money,
+                      send_webhook, set_supplier, wait_for)
 
 
-async def test_out_of_stock_then_recover(http, db):
+async def test_all_suppliers_fail_then_refund(http, db):
     await set_supplier(http, "A", mode="always_oos")
     await set_supplier(http, "B", mode="always_oos")
 
     order = await create_order(http, sku="KEY-EFT")
     await send_webhook(http, order["id"])
 
-    stuck = await wait_for(http, order["id"], {"out_of_stock", "delivery_failed"}, timeout=30.0)
-    assert stuck["status"] in ("out_of_stock", "delivery_failed")   # recoverable, no crash
+    final = await wait_for(http, order["id"], {"refunded"}, timeout=30.0)
+    assert final["status"] == "refunded"             # терминал достигнут, без краха
     assert await deliveries_count(db, order["id"]) == 0
 
-    # Возвращаем поставщика и даём восстановлению довести заказ.
-    await set_supplier(http, "A", mode="normal")
+    # Оплачено == возвращено; выдано == 0.
+    paid, delivered, refunded = await order_money(db, order["id"])
+    assert paid == refunded == order["amount"]
+    assert delivered == 0
+
+    # Восстановление идемпотентно: терминальный возврат не откатывается и не дублируется.
     async with http.post(f"{STORE}/admin/recover") as r:
         assert r.status == 200
+    again = await wait_for(http, order["id"], {"refunded"}, timeout=10.0)
+    assert again["status"] == "refunded"
+    assert await deliveries_count(db, order["id"]) == 0
 
-    final = await wait_for(http, order["id"], {"delivered"}, timeout=30.0)
-    assert final["status"] == "delivered"
-    assert final["code"]
-    assert await deliveries_count(db, order["id"]) == 1
+    async with http.get(f"{STORE}/admin/reconcile") as r:
+        report = await r.json()
+    assert report["ledger"]["balanced"] is True
+    assert report["money_mismatch"] == []

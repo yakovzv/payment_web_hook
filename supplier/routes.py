@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 
 from app.internal.pkg.models.delivery import IssueRequest, IssueResponse
 from supplier.models import SupplierConfigIn, SupplierStatus
@@ -11,6 +11,21 @@ _stub = SupplierStub()
 @router.post("/{supplier}/issue", response_model=IssueResponse)
 async def issue(supplier: str, req: IssueRequest) -> IssueResponse:
     return await _stub.issue(supplier, req)
+
+
+@router.get("/{supplier}/issues")
+async def list_issues(supplier: str) -> list[dict]:
+    """Аудит-выгрузка всех выданных кодов (source of truth для сверки)."""
+    return await _stub.list_issues(supplier)
+
+
+@router.get("/{supplier}/issue/{request_id}")
+async def get_issue(supplier: str, request_id: str) -> dict:
+    """Аудит по одному request_id: что поставщик реально выдал (или 404)."""
+    code = await _stub.find_issue(supplier, request_id)
+    if code is None:
+        raise HTTPException(status_code=404, detail={"status": "not_found"})
+    return {"request_id": request_id, "code": code}
 
 
 @router.post("/{supplier}/config", status_code=status.HTTP_200_OK)

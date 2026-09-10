@@ -35,6 +35,40 @@ class SupplierRepo:
             )
             return row["code"] if row else None
 
+    async def list_issues(self, supplier: str):
+        """Аудит-выгрузка: всё, что поставщик считает выданным (source of truth
+        для сверки, в отличие от ненадёжного ответа /issue)."""
+        async with db_instance.get_connect() as conn:
+            return await conn.fetch(
+                "SELECT request_id, code, sku, order_id, created_at "
+                "FROM supplier_issues WHERE supplier=$1 ORDER BY created_at, request_id",
+                supplier,
+            )
+
+    async def any_existing_code(self, supplier: str, exclude_request_id: str):
+        """Любой уже выданный код (кроме текущего request_id) - сырьё для
+        византийских режимов «дубль» / «чужой код»."""
+        async with db_instance.get_connect() as conn:
+            row = await conn.fetchrow(
+                "SELECT code FROM supplier_issues "
+                "WHERE supplier=$1 AND request_id<>$2 "
+                "ORDER BY created_at DESC LIMIT 1",
+                supplier, exclude_request_id,
+            )
+            return row["code"] if row else None
+
+    async def record_issue(self, supplier: str, request_id: str, sku, order_id, code) -> None:
+        """Записать выдачу без списания инвентаря (тот же код уходит второй раз)."""
+        async with db_instance.get_connect() as conn:
+            await conn.execute(
+                """
+                INSERT INTO supplier_issues (supplier, request_id, sku, order_id, code)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (supplier, request_id) DO NOTHING
+                """,
+                supplier, request_id, sku, order_id, code,
+            )
+
     async def reserve_code(self, supplier: str, request_id: str, sku, order_id):
         """Атомарно занять один свободный код и записать идемпотентную выдачу.
         Возвращает код или None, если кодов нет."""

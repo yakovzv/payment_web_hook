@@ -66,7 +66,8 @@ async def wait_delivered(session, base, order_id, timeout=15.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         order = await get_order(session, base, order_id)
-        if order["status"] in ("delivered", "payment_failed", "out_of_stock", "delivery_failed"):
+        if order["status"] in ("delivered", "partially_delivered", "refunded",
+                                "payment_failed", "out_of_stock", "delivery_failed"):
             return order
         await asyncio.sleep(0.3)
     return await get_order(session, base, order_id)
@@ -104,7 +105,7 @@ async def main():
             order = await create_order(session, args.base, args.sku)
             print("created:", order["id"], order["status"])
             summary = await race(session, args.base, order["id"], args.count, args.same_event)
-            print(f"fired {args.count} parallel webhooks ->", summary)
+            print(f"fired {args.count} parallel webhooks:", summary)
             final = await wait_delivered(session, args.base, order["id"])
             print("final order:", {k: final[k] for k in ("id", "status", "code", "supplier")})
 

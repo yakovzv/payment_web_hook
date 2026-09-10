@@ -10,13 +10,17 @@ from app.internal.services.order_service import OrderService
 router = APIRouter(tags=["orders"], prefix="/orders")
 
 
-@router.post("", status_code=status.HTTP_201_CREATED, description="Create an order by SKU")
+@router.post(
+    "",
+    status_code=status.HTTP_201_CREATED,
+    description="Create an order by a single `sku` or a list of `items` (SKUs)",
+)
 @inject
 async def create_order(
     body: CreateOrderRequest,
     order_service: OrderService = Depends(Provide[Services.order_service]),
 ) -> Order:
-    return await order_service.create_order(body.sku)
+    return await order_service.create_order(body.skus())
 
 
 @router.get("/{order_id}", status_code=status.HTTP_200_OK, description="Get order (with code)")
@@ -38,4 +42,4 @@ async def redeliver(
     order_id: str,
     delivery_service: DeliveryService = Depends(Provide[Services.delivery_service]),
 ) -> DeliveryResult:
-    return await delivery_service.deliver(order_id)
+    return await delivery_service.redeliver_order(order_id)

@@ -1,4 +1,4 @@
-"""Старт и остановка фоновых воркеров, закрытие пула БД. Число воркеров — из .env."""
+"""Старт и остановка фоновых воркеров, закрытие пула БД. Число воркеров - из .env."""
 
 import asyncio
 
@@ -6,6 +6,7 @@ from app.internal.pkg.config import config
 from app.internal.pkg.connectors import db_instance
 from app.internal.services import Services
 from app.internal.workers.delivery_worker import DeliveryWorker
+from app.internal.workers.integrity_worker import IntegrityWorker
 from app.internal.workers.recovery_worker import RecoveryWorker
 
 # Получаем экземпляры сервисов из DI-контейнера (все репозитории/клиенты связаны).
@@ -14,6 +15,7 @@ _services = Services()
 _delivery_service = _services.delivery_service()
 _payment_service = _services.payment_service()
 _reconcile_service = _services.reconcile_service()
+_integrity_service = _services.integrity_service()
 
 
 def _delivery_count() -> int:
@@ -22,6 +24,10 @@ def _delivery_count() -> int:
 
 def _recovery_count() -> int:
     return config.RECOVERY_WORKER_COUNT if config.RECOVERY_WORKER_ENABLED else 0
+
+
+def _integrity_count() -> int:
+    return config.INTEGRITY_WORKER_COUNT if config.INTEGRITY_WORKER_ENABLED else 0
 
 
 _delivery_workers = [
@@ -33,16 +39,23 @@ _recovery_workers = [
                    name=f"recovery-worker-{i + 1}")
     for i in range(_recovery_count())
 ]
+_integrity_workers = [
+    IntegrityWorker(_integrity_service, name=f"integrity-worker-{i + 1}")
+    for i in range(_integrity_count())
+]
+
+
+_all_workers = (*_delivery_workers, *_recovery_workers, *_integrity_workers)
 
 
 async def start_workers():
-    for worker in (*_delivery_workers, *_recovery_workers):
+    for worker in _all_workers:
         worker.start()
 
 
 async def stop_workers():
     # Останавливаем все воркеры параллельно.
-    await asyncio.gather(*(w.stop() for w in (*_delivery_workers, *_recovery_workers)))
+    await asyncio.gather(*(w.stop() for w in _all_workers))
 
 
 async def close_pool():
